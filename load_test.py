@@ -71,7 +71,7 @@ def request_schedule_constant_rps(rps, start_time, end_time):
 
 # This function should support non-constant RPS in the future
 def main_loop_rps_mode(dataset, request_q, rps, start_time, end_time):
-    """Dispatch requests with constant RPS, via schedule_q"""
+    """Dispatch requests with constant RPS, via request_q"""
     req_times = request_schedule_constant_rps(rps, start_time, end_time)
         
     current_time = time.time()
@@ -105,7 +105,8 @@ def gather_results(results_pipes):
     return results_list
 
 
-def exit_gracefully(procs, request_q, stop_q, logger_q, log_reader_thread, code):
+
+def stop_procs(procs, request_q, stop_q):
     """Exit gracefully."""
     # Signal users to stop sending requests
     if stop_q.empty():
@@ -121,11 +122,44 @@ def exit_gracefully(procs, request_q, stop_q, logger_q, log_reader_thread, code)
         proc.join()
     logging.info("User processes terminated succesfully")
 
+    stop_q.get()
+
+
+def stop_test(logger_q, log_reader_thread, code):
+    """Clean up logger thread and exit the program."""
     # Shutdown logger thread
     logger_q.put(None)
     log_reader_thread.join()
 
     sys.exit(code)
+
+
+def create_procs(mp_ctx, request_q, stop_q, plugin, dataset, logger_q, log_level, duration, concurrency, rps):
+    """Create the user process objects."""
+    procs = []
+    results_pipes = []
+    logging.debug("Creating %s Users and corresponding processes", concurrency)
+    for idx in range(concurrency):
+        send_results, recv_results = mp_ctx.Pipe()
+        results_pipes.append(recv_results)
+        user = User(
+            idx,
+            request_q=request_q,
+            stop_q=stop_q,
+            results_pipe=send_results,
+            plugin=plugin,
+            logger_q=logger_q,
+            log_level=log_level,
+            run_duration=duration,
+            rate_limited=(rps is not None)
+        )
+
+        proc = mp_ctx.Process(target=user.run_user_process)
+        procs.append(proc)
+        logging.info("Starting %s", proc)
+        proc.start()
+
+    return procs, results_pipes
 
 
 def main(args):
@@ -152,50 +186,41 @@ def main(args):
         rps, concurrency, duration, plugin = utils.parse_config(config)
     except Exception as e:
         logging.error("Exiting due to invalid input: %s", repr(e))
-        exit_gracefully(procs, request_q, stop_q, logger_q, log_reader_thread, 1)
+
+        stop_procs([], request_q, stop_q)
+        stop_test(logger_q, log_reader_thread, 1)
 
     try:
-        logging.debug("Creating dataset with configuration %s", config["dataset"])
-        # Get model_name if set for prompt formatting
-        model_name = config.get("plugin_options", {}).get("model_name", "")
-        dataset = Dataset(model_name=model_name, **config["dataset"])
+        if not isinstance(concurrency, list):
+            concurrency = [concurrency]
 
-        logging.info("Creating %s Users and corresponding processes", concurrency)
-        for idx in range(concurrency):
-            send_results, recv_results = mp_ctx.Pipe()
-            results_pipes.append(recv_results)
-            user = User(
-                idx,
-                request_q=request_q,
-                stop_q=stop_q,
-                results_pipe=send_results,
-                plugin=plugin,
-                logger_q=logger_q,
-                log_level=args.log_level,
-                run_duration=duration,
-                rate_limited=(rps is not None)
-            )
-            proc = mp_ctx.Process(target=user.run_user_process)
-            procs.append(proc)
-            logging.info("Starting %s", proc)
-            proc.start()
+        for n_users in concurrency:
+            config["load_options"]["concurrency"] = n_users
+            logging.debug("Creating dataset with configuration %s", config["dataset"])
+            # TODO deprecate Get model_name if set for prompt formatting
+            model_name = config.get("plugin_options", {}).get("model_name", "")
+            dataset = Dataset(model_name=model_name, **config["dataset"])
+            procs, results_pipes = create_procs(mp_ctx, request_q, stop_q, plugin, dataset, logger_q, args.log_level, duration, n_users, rps)
 
-        logging.debug("Running main process")
-        run_main_process(rps, duration, dataset, request_q, stop_q)
+            logging.debug("Running main process")
 
-        results_list = gather_results(results_pipes)
+            run_main_process(rps, duration, dataset, request_q, stop_q)
+            results_list = gather_results(results_pipes)
+            utils.write_output(config, results_list, concurrency=n_users, duration=duration)
 
-        utils.write_output(config, results_list)
+            stop_procs(procs, stop_q)
 
     # Terminate queues immediately on ^C
     except KeyboardInterrupt:
         stop_q.cancel_join_thread()
-        exit_gracefully(procs, request_q, stop_q, logger_q, log_reader_thread, 130)
+        stop_procs(procs, request_q, stop_q)
+        stop_test(logger_q, log_reader_thread, 1)
     except Exception:
         logging.exception("Unexpected exception in main process")
-        exit_gracefully(procs, request_q, stop_q, logger_q, log_reader_thread, 1)
+        stop_procs(procs, request_q, stop_q)
+        stop_test(logger_q, log_reader_thread, 1)
 
-    exit_gracefully(procs, request_q, stop_q, logger_q, log_reader_thread, 0)
+    stop_test(logger_q, log_reader_thread, 0)
 
 
 if __name__ == "__main__":

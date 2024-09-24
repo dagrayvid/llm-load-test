@@ -74,6 +74,7 @@ def parse_config(config):
 
     load_options = config.get("load_options")
     duration = load_options.get("duration")
+    
     if load_options.get("type") == "concurrency":
         concurrency = load_options.get("concurrency")
         rps = None
@@ -114,7 +115,7 @@ def yaml_load(file):
             raise RuntimeError(f"Could not parse {file}") from exc
 
 
-def write_output(config, results_list):
+def write_output(config, results_list, concurrency, duration):
     """Write the results."""
     output_options = config.get("output")
     output_path = output_options.get("dir")
