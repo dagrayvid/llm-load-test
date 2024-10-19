@@ -58,7 +58,6 @@ class User:
         self.logger = logging.getLogger("user")
         return logging.getLogger("user")
 
-
     def _user_loop(self, test_end_time):
         while self.stop_q.empty():
             result = self.make_request(test_end_time)
@@ -89,6 +88,8 @@ class User:
     def run_user_process(self):
         """Run a process."""
         self._init_user_process_logging()
+
+        self.plugin.set_seed(self.user_id)
 
         # Waits for all processes to actually be started
         while not self.rate_limited and self.request_q.empty():
