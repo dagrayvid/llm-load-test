@@ -63,17 +63,7 @@ class User:
         self.logger = logging.getLogger("user")
         return logging.getLogger("user")
 
-    def run_user_process(self):
-        """Run a process."""
-        self._init_user_process_logging()
-
-        # Waits for all processes to actually be started
-        while not self.rate_limited and self.schedule_q.empty():
-            time.sleep(0.1)
-        
-        test_end_time = time.time() + self.run_duration
-        self.logger.info("User %s starting request loop", self.user_id)
-
+    def _rate_limited_user_loop(self, test_end_time):
         while self.stop_q.empty():
             try:
                 req_schedule_time = self.schedule_q.get(timeout=2)
@@ -92,6 +82,28 @@ class User:
                 self.results_list.append(result)
             else:
                 self.logger.info("Unexpected None result from User.make_request()")
+
+
+    def run_user_process(self):
+        """Run a process."""
+        self._init_user_process_logging()
+
+        self.plugin.set_seed(self.user_id)
+
+        # Waits for all processes to actually be started
+        while not self.rate_limited and self.schedule_q.empty():
+            time.sleep(0.1)
+        
+        test_end_time = time.time() + self.run_duration
+        self.logger.info("User %s starting request loop", self.user_id)
+
+        if self.rate_limited:
+            self._rate_limited_user_loop(test_end_time)
+        else:
+            while self.stop_q.empty():
+                result = self.make_request(test_end_time)
+                if result is not None:
+                    self.results_list.append(result)
 
         self.results_pipe.send(self.results_list)
 
