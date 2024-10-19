@@ -63,6 +63,8 @@ class User:
         """Run a process."""
         self._init_user_process_logging()
 
+        self.plugin.set_seed(self.user_id)
+
         test_end_time = time.time() + self.run_duration
         while self.stop_q.empty():
             result = self.make_request(test_end_time)

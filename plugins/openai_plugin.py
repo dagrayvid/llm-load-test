@@ -5,6 +5,8 @@ from typing import Any, Optional, Union
 
 import requests
 import urllib3
+import os
+import random
 
 from plugins import plugin
 from result import RequestResult
@@ -63,9 +65,23 @@ class OpenAIPlugin(plugin.Plugin):
         else:
             self.request_func = self.request_http
 
-        self.host = args.get("host") + args.get("endpoint")
+        self.load_balance = args["load_balance"]
 
-        logger.debug("Host: %s", self.host)
+        if self.load_balance:       
+            self.user_id = 0    
+            self.rand = random.Random(self.user_id) 
+            import socket
+            ip_list = []
+            ais = socket.getaddrinfo(args.get("host"),0,0,0,0)
+            for result in ais:
+                ip_list.append(result[-1][0])
+                ip_list = list(set(ip_list))
+            self.host = ip_list
+            self.endpoint = args.get("endpoint")
+            logger.info("Hosts: %s", self.host)
+        else:
+            self.host = args.get("host") + args.get("endpoint")
+            logger.debug("Host: %s", self.host)
 
         self.model_name = args.get("model_name")
 
@@ -85,6 +101,7 @@ class OpenAIPlugin(plugin.Plugin):
             seed = 42,
         )
 
+
     def _process_resp(self, resp: bytes) -> Optional[dict]:
         try:
             _, found, data = resp.partition(b"data: ")
@@ -97,6 +114,54 @@ class OpenAIPlugin(plugin.Plugin):
             return None
 
         return message
+
+    def _select_best_host(self, ip_list, user_id):
+        #random.seed(seed*int(time.time()))
+        metrics_port_and_endpoint = "8080/metrics"
+        metrics = {}
+        num_ips = len(ip_list)
+
+        # If all instances have kv_cache_pct < 0.2 just round robin based on user_id, 
+        # else go to least
+
+        shuffled_ips = self.rand.sample(self.host, num_ips)
+        for ip in shuffled_ips:
+        #url="http://10.128.2.34:15020/stats/prometheus"
+            try:
+                r = requests.get(f"http://{ip}:{metrics_port_and_endpoint}", timeout=0.2)
+                for line in r.iter_lines():
+                    if b"vllm:gpu_cache_usage_perc{" in line:
+                        #logging.info(f"Found metric on this line {line.decode('utf-8')}")
+                        kv_cache_pct = line.decode("utf-8").split(" ")[-1]
+                        logging.info(f"pod: {ip}, kv_cache_pct: {float(kv_cache_pct)}")
+                        metrics[ip] = float(kv_cache_pct)
+                        if metrics[ip] < 0.2:
+                            ret = ip_list[user_id % len(ip_list)]
+                            logging.info(f"selected {ret}")
+                            return(ret)
+            except requests.exceptions.Timeout:
+                print(f"Warning: timed out on pod {ip}")
+
+        # If some instances are completely idle, random load balance.
+        low_value_keys = [key for key, value in metrics.items() if value < 0.2]
+        if low_value_keys:
+            logging.info(f"Randomly selecting from {low_value_keys}")
+            ret = self.rand.choice(low_value_keys)
+            
+            #return(sys_random.choice(zero_value_keys))
+        else:
+            # Return ip associated with lowest number
+            ret = min(metrics, key=metrics.get)
+        
+        logging.info(f"selected {ret}")
+        return(ret)
+        #best_pod = min(pods, key=lambda x:x['kv_cache_pct'])
+        #print(f"Best pod: {best_pod}")
+
+    def set_seed(self, user_id):
+        self.user_id = user_id
+        self.rand = random.Random(self.user_id*10000)
+
 
     def request_http(self, query: dict, user_id: int, test_end_time: float = 0):
 
@@ -206,11 +271,17 @@ class OpenAIPlugin(plugin.Plugin):
 
         result = RequestResult(user_id, query.get("input_id"))
 
+        if self.load_balance:
+            logging.info(f"user_id: {user_id}")
+            host = "http://" + self._select_best_host(self.host, user_id) + self.endpoint
+        else:
+            host = self.host
+
         response = None
         result.start_time = time.time()
         try:
             response = requests.post(
-                self.host, headers=headers, json=data, verify=False, stream=True
+                host, headers=headers, json=data, verify=False, stream=True
             )
             response.raise_for_status()
         except (

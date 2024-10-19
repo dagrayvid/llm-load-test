@@ -14,6 +14,7 @@ class RequestResult:
         self.output_text: Optional[str] = None
         self.output_tokens: Optional[int] = None
         self.output_tokens_before_timeout: Optional[int] = None
+        self.query_metrics_time: Optional[float] = None
         self.start_time: Optional[float] = None
         self.ack_time: Optional[float] = None
         self.first_token_time: Optional[float] = None
