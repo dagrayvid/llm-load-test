@@ -186,6 +186,14 @@ def write_output(config, results_list):
     df_test_duration = df[df["output_tokens"] == df["output_tokens_before_timeout"]]
     req_completed_within_test_duration = len(df_test_duration)
 
+    if rps is not None:
+        rps_scheduled = req_count / duration
+        rps_completed = req_completed_within_test_duration / duration
+        print(f"Actual requests per second scheduled: {rps_scheduled}")
+        print(f"Actual requests per second completed during run: {rps_completed}")
+        average_client_wait_time = df["client_wait_time"].mean()
+        print(f"Avg. client wait time per request: {average_client_wait_time}")
+
     # Time per output token summary
     output_obj = get_summary(df_test_duration, output_obj, "tpot")
 

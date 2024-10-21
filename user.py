@@ -58,11 +58,13 @@ class User:
         self.logger = logging.getLogger("user")
         return logging.getLogger("user")
 
+
     def _user_loop(self, test_end_time):
         while self.stop_q.empty():
             result = self.make_request(test_end_time)
             if result is not None:
                 self.results_list.append(result)
+
 
     def _rate_limited_user_loop(self, test_end_time):
         while self.stop_q.empty():
