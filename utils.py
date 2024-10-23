@@ -128,7 +128,7 @@ def write_output(config, results_list, concurrency, duration):
 
     rps, concurrency, duration, _ = parse_config(config)
     outfile_name = output_options.get("file").format(
-        concurrency=concurrency, duration=duration
+        concurrency=concurrency, duration=duration, rps=rps
     )
     outfile = path / Path(outfile_name)
     results_list = [result.asdict() for result in results_list]

@@ -36,6 +36,7 @@ class Dataset:
                              ]
         if len(self.dataset_list) < 4:
             logging.warning("Total dataset is %s elements, check filters!", len(self.dataset_list))
+        logging.info("Total dataset is %s elements", len(self.dataset_list))
         self.index = 0
 
     def get_next_n_queries(self, n):

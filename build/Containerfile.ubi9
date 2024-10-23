@@ -1,6 +1,6 @@
 FROM registry.access.redhat.com/ubi9
 
-RUN dnf install -y wget git golang
+RUN dnf install -y wget git golang vim procps
 
 RUN python3 -m ensurepip --upgrade
 

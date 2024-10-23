@@ -77,17 +77,17 @@ def main_loop_rps_mode(dataset, request_q, rps, start_time, end_time):
     current_time = time.time()
     query = dataset.get_next_n_queries(1)[0]
     for next_req_time in req_times:
+        # Wait or spin until next req needs to be dispatched
         while next_req_time > current_time:
-            # Wait or spin until next req needs to be dispatched
             sleep_time = (next_req_time - current_time) - 0.03 # Sleep until 30ms before next_req_time
             if sleep_time > 0:
                 time.sleep(sleep_time)
             # else spin
             current_time = time.time()
-        
+
         logging.info(f"Scheduling request time {next_req_time}")
         request_q.put((next_req_time, query))
-        
+
         query = dataset.get_next_n_queries(1)[0]
 
         if current_time >= end_time:
@@ -208,7 +208,7 @@ def main(args):
             results_list = gather_results(results_pipes)
             utils.write_output(config, results_list, concurrency=n_users, duration=duration)
 
-            stop_procs(procs, stop_q)
+            stop_procs(procs, request_q, stop_q)
 
     # Terminate queues immediately on ^C
     except KeyboardInterrupt:
