@@ -199,14 +199,20 @@ def write_output(config, results_list, concurrency, duration):
     output_obj = get_summary(df_test_duration, output_obj, "tpot")
 
     if "ttft" in df:
-        # Time to first token summary
-        output_obj = get_summary(df_test_duration, output_obj, "ttft")
-
-        # Inter-token latency summary
-        output_obj = get_summary(df_test_duration, output_obj, "itl")
-
-        # Time to ack summary
-        output_obj = get_summary(df_test_duration, output_obj, "tt_ack")
+        if rps is not None:
+            # Time to first token summary
+            output_obj = get_summary(df, output_obj, "ttft")
+            # Inter-token latency summary
+            output_obj = get_summary(df, output_obj, "itl")
+            # Time to ack summary
+            output_obj = get_summary(df, output_obj, "tt_ack")
+        else:
+            # Time to first token summary
+            output_obj = get_summary(df_test_duration, output_obj, "ttft")
+            # Inter-token latency summary
+            output_obj = get_summary(df_test_duration, output_obj, "itl")
+            # Time to ack summary
+            output_obj = get_summary(df_test_duration, output_obj, "tt_ack")
 
     # response time summary
     output_obj = get_summary(df, output_obj, "response_time")

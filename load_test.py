@@ -5,6 +5,7 @@ import logging.handlers
 import multiprocessing as mp
 import sys
 import time
+import vllm_prom_scraper
 from user import User
 
 from dataset import Dataset
@@ -106,7 +107,7 @@ def gather_results(results_pipes):
 
 
 
-def stop_procs(procs, request_q, stop_q):
+def stop_procs(metrics_process, procs, request_q, stop_q):
     """Exit gracefully."""
     # Signal users to stop sending requests
     if stop_q.empty():
@@ -122,10 +123,13 @@ def stop_procs(procs, request_q, stop_q):
         proc.join()
     logging.info("User processes terminated succesfully")
 
+    if metrics_process is not None:
+        metrics_process.terminate()
+
     stop_q.get()
 
 
-def stop_test(logger_q, log_reader_thread, code):
+def stop_test(manager, logger_q, log_reader_thread, code):
     """Clean up logger thread and exit the program."""
     # Shutdown logger thread
     logger_q.put(None)
@@ -134,7 +138,7 @@ def stop_test(logger_q, log_reader_thread, code):
     sys.exit(code)
 
 
-def create_procs(mp_ctx, request_q, stop_q, plugin, dataset, logger_q, log_level, duration, concurrency, rps):
+def create_procs(mp_ctx, request_q, stop_q, plugin, dataset, logger_q, log_level, duration, concurrency, rps, chosen_ips):
     """Create the user process objects."""
     procs = []
     results_pipes = []
@@ -151,7 +155,8 @@ def create_procs(mp_ctx, request_q, stop_q, plugin, dataset, logger_q, log_level
             logger_q=logger_q,
             log_level=log_level,
             run_duration=duration,
-            rate_limited=(rps is not None)
+            rate_limited=(rps is not None),
+            chosen_ips=chosen_ips
         )
 
         proc = mp_ctx.Process(target=user.run_user_process)
@@ -168,7 +173,11 @@ def main(args):
 
     mp_ctx = mp.get_context("spawn")
     logger_q = mp_ctx.Queue()
+
     log_reader_thread = logging_utils.init_logging(args.log_level, logger_q)
+
+    manager = mp_ctx.Manager()
+    chosen_ips = manager.list()
 
     # Create processes and their Users
     request_q = mp_ctx.Queue(1)
@@ -187,8 +196,21 @@ def main(args):
     except Exception as e:
         logging.error("Exiting due to invalid input: %s", repr(e))
 
-        stop_procs([], request_q, stop_q)
-        stop_test(logger_q, log_reader_thread, 1)
+        stop_procs(None, [], request_q, stop_q)
+        stop_test(manager, logger_q, log_reader_thread, 1)
+
+    if config.get("plugin_options", {}).get("load_balance", None):
+        host = config.get("plugin_options", {}).get("host")
+        metrics_process = mp_ctx.Process(
+            target=vllm_prom_scraper.query_metrics,
+            args=(logger_q, args.log_level, host, chosen_ips, "8080/metrics"),
+        )
+        metrics_process.start()
+    else: 
+        metrics_process = None
+        chosen_ips = None
+
+    time.sleep(4)
 
     try:
         if not isinstance(concurrency, list):
@@ -200,7 +222,7 @@ def main(args):
             # TODO deprecate Get model_name if set for prompt formatting
             model_name = config.get("plugin_options", {}).get("model_name", "")
             dataset = Dataset(model_name=model_name, **config["dataset"])
-            procs, results_pipes = create_procs(mp_ctx, request_q, stop_q, plugin, dataset, logger_q, args.log_level, duration, n_users, rps)
+            procs, results_pipes = create_procs(mp_ctx, request_q, stop_q, plugin, dataset, logger_q, args.log_level, duration, n_users, rps, chosen_ips)
 
             logging.debug("Running main process")
 
@@ -208,19 +230,20 @@ def main(args):
             results_list = gather_results(results_pipes)
             utils.write_output(config, results_list, concurrency=n_users, duration=duration)
 
-            stop_procs(procs, request_q, stop_q)
+            stop_procs(metrics_process, procs, request_q, stop_q)
 
     # Terminate queues immediately on ^C
     except KeyboardInterrupt:
         stop_q.cancel_join_thread()
-        stop_procs(procs, request_q, stop_q)
-        stop_test(logger_q, log_reader_thread, 1)
+        stop_procs(metrics_process, procs, request_q, stop_q)
+        
+        stop_test(manager, logger_q, log_reader_thread, 1)
     except Exception:
         logging.exception("Unexpected exception in main process")
-        stop_procs(procs, request_q, stop_q)
-        stop_test(logger_q, log_reader_thread, 1)
+        stop_procs(metrics_process, procs, request_q, stop_q)
+        stop_test(manager, logger_q, log_reader_thread, 1)
 
-    stop_test(logger_q, log_reader_thread, 0)
+    stop_test(manager, logger_q, log_reader_thread, 0)
 
 
 if __name__ == "__main__":

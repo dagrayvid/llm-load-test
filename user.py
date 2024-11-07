@@ -3,6 +3,7 @@
 import logging
 import queue
 import time
+import random
 
 
 class User:
@@ -19,6 +20,7 @@ class User:
         log_level,
         run_duration,
         rate_limited,
+        chosen_ips
     ):
         """Initialize object."""
         self.user_id = user_id
@@ -33,12 +35,31 @@ class User:
         self.logger = logging.getLogger("user")
         self.run_duration = run_duration
         self.rate_limited = rate_limited
+        self.chosen_ips = chosen_ips
+        self.rand = random.Random(self.user_id*10000)
 
     def make_request(self, query, test_end_time=0, req_schedule_time=None):
         """Make a request."""
 
+        if self.chosen_ips is not None:
+            ips = list(self.chosen_ips)
+            self.logger.info(f"Options: {ips}")
+            idx1, idx2 = random.sample(range(len(ips)), 2)
+            host = ips[min(idx1, idx2)]
+            self.logger.info(f"Chose: {host}")
+
+            #low_value_keys = [key for key, value in metrics.items() if value < 0.2]
+            #if low_value_keys:
+            #    logging.info(f"Randomly selecting from {low_value_keys}")
+            #    host = self.rand.choice(low_value_keys)
+            #else:
+            #    # Return ip associated with lowest number
+            #    host = min(metrics, key=metrics.get)
+        else:
+            host = self.plugin.host
+
         self.logger.info("User %s making request", self.user_id)
-        result = self.plugin.request_func(query, self.user_id, test_end_time)
+        result = self.plugin.request_func(query, self.user_id, test_end_time, host)
 
         if req_schedule_time:
             result.scheduled_start_time = req_schedule_time
@@ -89,7 +110,7 @@ class User:
         """Run a process."""
         self._init_user_process_logging()
 
-        self.plugin.set_seed(self.user_id)
+        #self.plugin.set_seed(self.user_id)
 
         # Waits for all processes to actually be started
         while not self.rate_limited and self.request_q.empty():
